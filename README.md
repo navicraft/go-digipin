@@ -1,4 +1,4 @@
-# go-digipin
+# DIGIPIN - Digital Addressing System in India
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/navicraft/go-digipin.svg)](https://pkg.go.dev/github.com/navicraft/go-digipin)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
