@@ -10,6 +10,9 @@ jobs:
   test:
     name: Test and Validate
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ["1.21", "1.22", "1.23", "1.24"]
 
     steps:
       - name: Check out code
@@ -18,28 +21,30 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: 1.24
+          go-version: ${{ matrix.go-version }}
 
-      - name: Download dependencies
-        run: go mod download
+      - name: Build
+        run: go build ./...
 
       - name: Run tests with coverage
         run: go test -v -race -coverprofile=coverage.out ./...
 
-      - name: Check test coverage
+      - name: Enforce 100% coverage
         run: |
           go tool cover -func=coverage.out
-          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print substr($3, 1, length($3)-1)}')
-          echo "Total coverage: $COVERAGE%"
-          if (( $(echo "$COVERAGE < 80" | bc -l) )); then
-            echo "Coverage is below 80%: $COVERAGE%"
+          UNCOVERED=$(go tool cover -func=coverage.out | grep -v '100.0%' | grep -v '^total:' || true)
+          if [ -n "$UNCOVERED" ]; then
+            echo "Coverage is below 100%:"
+            echo "$UNCOVERED"
             exit 1
           fi
+          echo "Coverage is 100.0%"
 
-      - name: Run linting
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: latest
+      - name: Fuzz smoke test
+        if: matrix.go-version == '1.24'
+        run: |
+          go test -run=^$ -fuzz=FuzzEncodeDecodeRoundTrip -fuzztime=20s .
+          go test -run=^$ -fuzz=FuzzDecode -fuzztime=20s .
 
       - name: Check formatting and vet
         run: |
@@ -49,3 +54,18 @@ jobs:
             exit 1
           fi
           go vet ./...
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: golangci-lint
+        # Pinned to the version the .golangci.yml schema targets (v1). Using
+        # "latest" would install golangci-lint v2, whose config format differs.
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.64.8

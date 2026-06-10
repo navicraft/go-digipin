@@ -1,240 +1,153 @@
-# DIGIPIN - Digital Addressing System in India
+<p align="center">
+  <img src="docs/digipin-logo-blue.png" alt="DIGIPIN" width="96">
+</p>
+
+# go-digipin
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/navicraft/go-digipin.svg)](https://pkg.go.dev/github.com/navicraft/go-digipin)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Go Report Card](https://goreportcard.com/badge/github.com/navicraft/go-digipin)](https://goreportcard.com/report/github.com/navicraft/go-digipin)
+[![CI](https://github.com/navicraft/go-digipin/actions/workflows/ci.yml/badge.svg)](https://github.com/navicraft/go-digipin/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)](https://github.com/navicraft/go-digipin)
+[![Go Version](https://img.shields.io/badge/go-%3E%3D1.21-00ADD8)](https://go.dev)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A high-performance, pure Go implementation of the DIGIPIN geocoding system developed by India Post in collaboration with IIT Hyderabad and NRSC, ISRO. DIGIPIN converts geographic coordinates to compact, human-readable 10-character alphanumeric codes using a hierarchical 4×4 grid system optimized for the Indian subcontinent.
+**DIGIPIN encoder and decoder for Go**. Convert any latitude/longitude in India to
+a short DIGIPIN geocode and back, offline, with zero dependencies.
+
+DIGIPIN (Digital Postal Index Number) is India Post's grid-based digital addressing
+system. It maps a coordinate to a 10-character alphanumeric code using a hierarchical
+4×4 grid, so nearby places share code prefixes, like a geohash for India.
+
+```go
+d, _ := digipin.Encode(28.70486848, 77.10376044)
+fmt.Println(d.Canonical()) // 39JJ567L7P
+fmt.Println(d.Formatted()) // 39J J567 L7P
+
+c, _ := digipin.Decode("39JJ567L7P")
+fmt.Printf("%.6f, %.6f\n", c.Latitude, c.Longitude) // 28.704882, 77.103769
+```
 
 ## Features
 
-- **Zero Dependencies**: Pure Go implementation
-- **High Performance**: ~101ns encode, ~232ns decode
-- **Thread-Safe**: Safe for concurrent use
-- **Comprehensive**: Encoding, decoding, validation, bounds, equality checks
-- **Well-Tested**: 100% test coverage with edge cases
+- **Encode / decode** coordinates ⟷ DIGIPIN, following the DIGIPIN specification.
+- **Both code forms**: canonical continuous (`39JJ567L7P`, for storage and interchange)
+  and 3-4-3 display (`39J J567 L7P`).
+- **Lenient decoding**: accepts continuous, spaced, and hyphenated input, any case.
+- **Variable precision**: encode to any level 1–10 (`EncodeLevel`).
+- **Spatial helpers**: bounding boxes, adjacent-cell neighbors, parent cells,
+  haversine distance, GeoJSON cell polygons, and Google Maps links.
+- **Zero dependencies**, pure Go, allocation-light, goroutine-safe.
+- **100% test coverage**.
 
-## Installation
+## Install
 
-```bash
+```sh
 go get github.com/navicraft/go-digipin
 ```
 
-## Quick Start
+```go
+import digipin "github.com/navicraft/go-digipin"
+```
+
+## Coverage area & code format
+
+DIGIPIN covers India's bounding box: latitude **2.5–38.5**, longitude **63.5–99.5**.
+Codes use the 16 unambiguous characters `2 3 4 5 6 7 8 9 C F J K L M P T` (no 0, 1,
+I, O). The canonical form is continuous; spaces in a 3-4-3 group are display-only.
+
+## Usage
+
+### Encode / decode
+
+`Encode` returns a `Code`, a defined string type holding the canonical form.
 
 ```go
-package main
+c, err := digipin.Encode(12.9716, 77.5946) // c is a digipin.Code value
+if err != nil { /* out of range / not finite */ }
 
-import (
-    "fmt"
-    "log"
-    "github.com/navicraft/go-digipin"
-)
+c.Canonical() // "4P3JK852C9"
+c.Formatted() // "4P3 JK85 2C9"
+c.Level()     // 10
+c == "4P3JK852C9" // codes compare directly
 
-func main() {
-    // Encode coordinates to DIGIPIN
-    digipin, err := digipin.Encode(12.9716, 77.5946) // Bangalore
-    if err != nil {
-        log.Fatal(err)
-    }
-    fmt.Printf("Encoded: %s\n", digipin.Code) // 4P3-JK8-52C9
-
-    // Decode back to coordinates
-    coord, err := digipin.Decode(digipin.Code)
-    if err != nil {
-        log.Fatal(err)
-    }
-    fmt.Printf("Decoded: %s\n", coord.String()) // (12.971601, 77.594584)
-}
+// Decode accepts any form transparently.
+digipin.Decode("4P3JK852C9")
+digipin.Decode("4P3 JK85 2C9")
+digipin.Decode("4P3-JK8-52C9")
 ```
 
-## Coordinate Bounds
-
-DIGIPIN is optimized for the Indian subcontinent and supports coordinates within:
-
-- **Latitude**: 2.5° to 38.5° North
-- **Longitude**: 63.5° to 99.5° East
-
-This covers the entire Indian territory including maritime zones. Coordinates outside these bounds will return an error.
-
-## Code Format
-
-DIGIPIN codes are 10-character alphanumeric strings in the format `XXX-XXX-XXXX`, using only these characters:
-
-- **Digits**: 2, 3, 4, 5, 6, 7, 8, 9
-- **Letters**: C, F, J, K, L, M, P, T
-
-This character set avoids ambiguous characters (0, 1, I, O) for better readability and reduces confusion in manual transcription.
-
-## API Reference
-
-### Core Functions
+### Variable precision and hierarchy
 
 ```go
-// Encode coordinates to DIGIPIN
-func Encode(latitude, longitude float64) (*DIGIPIN, error)
-
-// Decode DIGIPIN to coordinates
-func Decode(digipinCode string) (*Coordinate, error)
-
-// Validate coordinates without encoding
-func ValidateCoordinates(latitude, longitude float64) error
-
-// Validate DIGIPIN format without decoding
-func ValidateDIGIPIN(digipinCode string) error
-
-// Get bounding box for a DIGIPIN
-func GetBounds(digipinCode string) (*Bounds, error)
+c, _ := digipin.EncodeLevel(12.9716, 77.5946, 4) // "4P3J"
+p, ok := c.Parent()                              // "4P3", true
 ```
 
-### Types
-
-#### `Coordinate`
+### Bounds, neighbors, distance
 
 ```go
-type Coordinate struct {
-    Latitude  float64 `json:"latitude"`
-    Longitude float64 `json:"longitude"`
-}
+c, _ := digipin.Parse("4P3JK852C9")
+b := c.Bounds()
+b.Center()  // Coordinate
+b.Corners() // [4]Coordinate (SW, SE, NE, NW)
 
-// Methods
-func (c *Coordinate) String() string
-func (c *Coordinate) Equal(other *Coordinate) bool
-func (c *Coordinate) EqualWithTolerance(other *Coordinate, tolerance float64) bool
-func (c *Coordinate) BelongsTo(digipin *DIGIPIN, tolerance float64) (bool, error)
+ns := c.Neighbors() // up to 8 adjacent cells at the same level
+
+a, _ := digipin.Encode(12.9716, 77.5946)
+z, _ := digipin.Encode(28.6139, 77.2090)
+m := digipin.Distance(a, z) // meters
 ```
 
-#### `DIGIPIN`
+### GeoJSON and Maps links
 
 ```go
-type DIGIPIN struct {
-    Code string `json:"digipin"`
-}
-
-// Methods
-func (d *DIGIPIN) String() string
-func (d *DIGIPIN) Equal(other *DIGIPIN) (bool, error)
-func (d *DIGIPIN) EqualWithTolerance(other *DIGIPIN, tolerance float64) (bool, error)
-func (d *DIGIPIN) BelongsTo(coord *Coordinate, tolerance float64) (bool, error)
-func (d *DIGIPIN) GetBounds() (*Bounds, error)
+gj := c.GeoJSON()           // GeoJSON Feature (cell polygon + "digipin" property)
+link := digipin.MapsLink(12.9716, 77.5946)
+// https://www.google.com/maps/search/?api=1&query=12.9716%2C77.5946
 ```
 
-#### `Bounds`
+### JSON
+
+`Code` marshals to and from its canonical JSON string:
 
 ```go
-type Bounds struct {
-    MinLatitude  float64 `json:"min_latitude"`
-    MaxLatitude  float64 `json:"max_latitude"`
-    MinLongitude float64 `json:"min_longitude"`
-    MaxLongitude float64 `json:"max_longitude"`
-}
-
-// Methods
-func (b *Bounds) String() string
-func (b *Bounds) Area() float64
-func (b *Bounds) Contains(coord *Coordinate) bool
+data, _ := json.Marshal(c)       // "4P3JK852C9"
+var x digipin.Code
+_ = json.Unmarshal([]byte(`"4P3 JK85 2C9"`), &x) // x == "4P3JK852C9"
 ```
 
-## Usage Examples
+## Command-line tool
 
-### Coordinate Validation
-
-```go
-err := digipin.ValidateCoordinates(12.9716, 77.5946)
-if err != nil {
-    fmt.Println("Invalid coordinates:", err)
-}
+```sh
+go install github.com/navicraft/go-digipin/cmd/digipin@latest
 ```
 
-### Tolerance-Based Comparison
+```sh
+digipin encode 28.70486848 77.10376044    # 39J J567 L7P
+digipin encode 28.70486848 77.10376044 --format plain --maps
+digipin decode 39JJ567L7P --json
+digipin bounds 39JJ567L7P --geojson
+digipin neighbors 39JJ567L7P
 
-```go
-coord1 := &digipin.Coordinate{Latitude: 12.9716, Longitude: 77.5946}
-coord2 := &digipin.Coordinate{Latitude: 12.9717, Longitude: 77.5947}
-
-// Check if coordinates belong to same DIGIPIN area
-digipin1, _ := digipin.Encode(12.9716, 77.5946)
-belongs, err := coord2.BelongsTo(digipin1, 1e-3) // custom tolerance
-
-// Compare DIGIPIN codes
-digipin2, _ := digipin.Encode(12.9717, 77.5947)
-equal, err := digipin1.EqualWithTolerance(digipin2, 1e-3)
+# Batch mode reads stdin (lat,lng per line for encode; codes for the rest):
+printf '28.7049,77.1038\n12.9716,77.5946\n' | digipin encode --batch
 ```
 
-### Bounding Box Operations
+## API overview
 
-```go
-// Get area covered by a DIGIPIN
-bounds, err := digipin.GetBounds("4P3-JK8-52C9")
-if err != nil {
-    log.Fatal(err)
-}
+| Symbol | Description |
+| --- | --- |
+| `Encode`, `EncodeLevel` | Coordinates → `Code` (full or level 1–10) |
+| `Decode` | DIGIPIN string → center `Coordinate` |
+| `Parse` | Validate any form → `Code` (canonical) |
+| `ValidateCoordinates`, `ValidateCode` | Input validation without encoding/decoding |
+| `Distance`, `Coordinate.DistanceTo` | Great-circle distance in meters |
+| `MapsLink`, `Coordinate.MapsLink`, `Code.MapsLink` | Google Maps URLs |
+| `Code.Canonical` / `.Formatted` / `.Level` / `.Valid` / `.Parent` / `.Neighbors` / `.Coordinate` / `.Bounds` / `.GeoJSON` | Code helpers |
+| `Bounds.Center` / `.Corners` / `.Width` / `.Height` / `.Contains` / `.GeoJSON` | Bounding-box helpers |
 
-fmt.Printf("Area: %s\n", bounds.String())
-fmt.Printf("Size: %.8f sq degrees\n", bounds.Area())
-
-// Check if coordinate is within bounds
-coord := &digipin.Coordinate{Latitude: 12.9716, Longitude: 77.5946}
-if bounds.Contains(coord) {
-    fmt.Println("Coordinate is within DIGIPIN area")
-}
-```
-
-## Constants & Errors
-
-- `DefaultTolerance = 1e-4` - Default tolerance (~11.1 meters at equator)
-- `ErrInvalidCoordinate` - Coordinates out of valid range
-- `ErrInvalidDIGIPIN` - Malformed DIGIPIN code
-
-**Valid Ranges:**
-
-- Latitude: 2.5 to 38.5 degrees North (DIGIPIN bounds)
-- Longitude: 63.5 to 99.5 degrees East (DIGIPIN bounds)
-- Format: XXX-XXX-XXXX (using characters: 2-9, C, F, J, K, L, M, P, T)
-
-## Performance
-
-Benchmarks on Apple M3 Pro:
-
-```
-BenchmarkEncode-11      11014057    101.6 ns/op    80 B/op    5 allocs/op
-BenchmarkDecode-11       5034634    232.5 ns/op    96 B/op    4 allocs/op
-BenchmarkRoundTrip-11    3394249    346.2 ns/op   176 B/op    9 allocs/op
-```
-
-## About DIGIPIN
-
-DIGIPIN is a geocoding system developed by India Post in collaboration with IIT Hyderabad and NRSC, ISRO. It provides:
-
-- **Compact Encoding**: 10-character codes vs lengthy coordinates
-- **Spatial Locality**: Similar locations have similar codes
-- **Standardized**: National addressing standard for India
-- **Reversible**: Lossless encoding and decoding
-
-## Testing
-
-```bash
-go test -v -race -coverprofile=coverage.out
-go tool cover -html=coverage.out
-```
-
-## Contributing
-
-1. Fork the repository
-2. Create feature branch (`git checkout -b feature/name`)
-3. Add tests for new functionality
-4. Ensure 100% test coverage
-5. Submit pull request
+Full documentation: **[pkg.go.dev/github.com/navicraft/go-digipin](https://pkg.go.dev/github.com/navicraft/go-digipin)**.
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details.
-
-## Algorithm Compliance
-
-This implementation follows the uses a hierarchical 4×4 grid system. It matches the exact algorithm used by India Post and produces identical DIGIPIN codes for the same coordinates.
-
-## Special mentions
-
-- Department of Posts, Government of India
-- Indian Institute of Technology, Hyderabad
-- National Remote Sensing Centre, ISRO
+[MIT](LICENSE).

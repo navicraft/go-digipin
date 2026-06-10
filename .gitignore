@@ -5,6 +5,10 @@
 *.so
 *.dylib
 
+# Compiled CLI binary (built from cmd/digipin)
+/digipin
+/cmd/digipin/digipin
+
 # Test binary, built with `go test -c`
 *.test
 

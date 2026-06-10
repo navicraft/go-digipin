@@ -1,0 +1,35 @@
+run:
+  timeout: 3m
+
+linters:
+  enable:
+    - revive
+    - govet
+    - errcheck
+    - staticcheck
+    - ineffassign
+    - unused
+    - misspell
+    - gocyclo
+    - goconst
+    - unconvert
+    - prealloc
+    - gofmt
+
+linters-settings:
+  gocyclo:
+    min-complexity: 15
+  misspell:
+    locale: US
+  gofmt:
+    simplify: true
+
+issues:
+  exclude-rules:
+    # Table-driven tests and example outputs are intentionally verbose.
+    - path: _test\.go
+      linters:
+        - gocyclo
+        - goconst
+  max-issues-per-linter: 0
+  max-same-issues: 0
