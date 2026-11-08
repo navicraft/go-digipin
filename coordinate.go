@@ -18,11 +18,15 @@ func (c Coordinate) String() string {
 	return fmt.Sprintf("(%.6f, %.6f)", c.Latitude, c.Longitude)
 }
 
-// Equal reports whether two coordinates are equal within a fixed epsilon (1e-6).
+// Equal reports whether two coordinates are exactly equal, the same as ==.
+//
+// Before v1.1.0 Equal compared within 1e-6, which silently made go-cmp (which
+// calls Equal methods) approximate. It is now exact.
+//
+// Deprecated: compare Coordinates with ==, or use WithinTolerance for an
+// approximate comparison.
 func (c Coordinate) Equal(other Coordinate) bool {
-	const epsilon = 1e-6
-	return math.Abs(c.Latitude-other.Latitude) < epsilon &&
-		math.Abs(c.Longitude-other.Longitude) < epsilon
+	return c == other
 }
 
 // WithinTolerance reports whether two coordinates are within tolerance decimal

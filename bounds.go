@@ -1,6 +1,9 @@
 package digipin
 
-import "fmt"
+import (
+	"fmt"
+	"math"
+)
 
 // Bounds is a geographic bounding box in WGS84 decimal degrees, describing the
 // rectangular cell covered by a DIGIPIN code.
@@ -20,6 +23,9 @@ func (b Bounds) String() string {
 
 // Area returns the box area in square degrees. This is a planar approximation
 // and does not account for the Earth's curvature.
+//
+// Deprecated: square degrees are not a meaningful unit of area (a degree of
+// longitude shrinks toward the poles). Use Width and Height instead.
 func (b Bounds) Area() float64 {
 	return (b.MaxLatitude - b.MinLatitude) * (b.MaxLongitude - b.MinLongitude)
 }
@@ -60,7 +66,19 @@ func (b Bounds) Contains(coord Coordinate) bool {
 		coord.Longitude <= b.MaxLongitude
 }
 
-// GeoJSON returns the bounds as a GeoJSON Feature with an empty properties object.
+// GeoJSON returns the bounds as a GeoJSON Feature with an empty properties
+// object. Bounds that are not a finite, non-empty box (for example the zero
+// Bounds, or ones holding NaN) yield a Feature with a null geometry.
 func (b Bounds) GeoJSON() []byte {
-	return feature(b, "")
+	return feature(b, map[string]string{})
+}
+
+// isBox reports whether b is a finite box with positive width and height.
+func (b Bounds) isBox() bool {
+	for _, v := range [4]float64{b.MinLatitude, b.MaxLatitude, b.MinLongitude, b.MaxLongitude} {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return false
+		}
+	}
+	return b.MinLatitude < b.MaxLatitude && b.MinLongitude < b.MaxLongitude
 }

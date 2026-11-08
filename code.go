@@ -1,14 +1,15 @@
 package digipin
 
-import "strconv"
+import "math"
 
 // Code is a DIGIPIN: the canonical, continuous (separator-free) encoding of a
 // location, e.g. "39JJ567L7P". Because it is a string value, two codes compare
 // directly with ==, and it can be used as a map key or struct field.
 //
 // A Code is meant to be produced by Encode, EncodeLevel, or Parse, which
-// guarantee it is valid. Methods assume that invariant; call Valid to check a
-// Code obtained from an untrusted source.
+// guarantee it is valid. Call Valid to check a Code obtained another way.
+// Geometric methods return zero, empty, or NaN results for an invalid Code
+// rather than a misleading location: see each method.
 type Code string
 
 // Canonical returns the continuous, separator-free form, e.g. "39JJ567L7P".
@@ -17,8 +18,8 @@ func (c Code) Canonical() string {
 }
 
 // Formatted returns a human-readable rendering. Full 10-character codes are
-// grouped 3-4-3 with spaces, e.g. "39J J567 L7P"; partial codes are returned
-// unchanged.
+// grouped 3-4-3 with spaces, e.g. "39J J567 L7P", as the specification permits
+// for display; partial codes are returned unchanged.
 func (c Code) Formatted() string {
 	if len(c) != codeLength {
 		return string(c)
@@ -43,25 +44,26 @@ func (c Code) Valid() bool {
 	if len(c) < 1 || len(c) > codeLength {
 		return false
 	}
-	for i := 0; i < len(c); i++ {
-		if _, ok := gridPos[c[i]]; !ok {
+	for i := range len(c) {
+		if gridPos[c[i]] < 0 {
 			return false
 		}
 	}
 	return true
 }
 
-// Coordinate returns the point at the center of the code's cell.
+// Coordinate returns the point at the center of the code's cell, or the zero
+// Coordinate if c is not Valid.
 func (c Code) Coordinate() Coordinate {
-	lat0, lat1, lng0, lng1 := walk(string(c))
-	return Coordinate{
-		Latitude:  (lat0 + lat1) / 2.0,
-		Longitude: (lng0 + lng1) / 2.0,
-	}
+	return c.Bounds().Center()
 }
 
-// Bounds returns the geographic bounding box covered by the code's cell.
+// Bounds returns the geographic bounding box covered by the code's cell, or the
+// zero Bounds if c is not Valid.
 func (c Code) Bounds() Bounds {
+	if !c.Valid() {
+		return Bounds{}
+	}
 	lat0, lat1, lng0, lng1 := walk(string(c))
 	return Bounds{
 		MinLatitude:  lat0,
@@ -85,21 +87,20 @@ func (c Code) Parent() (parent Code, ok bool) {
 // precision level, in reading order (NW, N, NE, W, E, SW, S, SE). Cells that
 // fall outside the DIGIPIN coverage area (for a code on the edge of the bounding
 // box) are omitted, so an interior cell yields 8 neighbors and an edge or corner
-// cell yields fewer.
+// cell yields fewer. An invalid Code yields none.
 func (c Code) Neighbors() []Code {
-	b := c.Bounds()
-	level := len(c)
-	center := b.Center()
-	dLat := b.Height()
-	dLng := b.Width()
-
 	neighbors := make([]Code, 0, 8)
+	if !c.Valid() {
+		return neighbors
+	}
+	b := c.Bounds()
+	center := b.Center()
 	for dRow := -1; dRow <= 1; dRow++ {
 		for dCol := -1; dCol <= 1; dCol++ {
 			if dRow == 0 && dCol == 0 {
 				continue
 			}
-			n, err := EncodeLevel(center.Latitude-float64(dRow)*dLat, center.Longitude+float64(dCol)*dLng, level)
+			n, err := EncodeLevel(center.Latitude-float64(dRow)*b.Height(), center.Longitude+float64(dCol)*b.Width(), len(c))
 			if err != nil {
 				continue
 			}
@@ -110,25 +111,44 @@ func (c Code) Neighbors() []Code {
 }
 
 // DistanceTo returns the great-circle distance, in meters, between the centers of
-// this code's cell and another.
+// this code's cell and another, or NaN if either Code is not Valid.
 func (c Code) DistanceTo(other Code) float64 {
+	if !c.Valid() || !other.Valid() {
+		return math.NaN()
+	}
 	return c.Coordinate().DistanceTo(other.Coordinate())
 }
 
-// MapsLink returns a Google Maps URL pointing at the center of the code's cell.
+// MapsLink returns a Google Maps URL pointing at the center of the code's cell,
+// or "" if c is not Valid.
 func (c Code) MapsLink() string {
+	if !c.Valid() {
+		return ""
+	}
 	return c.Coordinate().MapsLink()
 }
 
 // MarshalText implements encoding.TextMarshaler, emitting the canonical form.
 // This makes Code marshal as a plain string in JSON and other text encodings.
+// The zero Code marshals as an empty string; any other invalid Code is an
+// error, so a value that would not unmarshal is never written. (The exception
+// is a Code used as a JSON map key: encoding/json writes string-kind keys
+// directly without calling MarshalText.)
 func (c Code) MarshalText() ([]byte, error) {
+	if c != "" && !c.Valid() {
+		return nil, ErrInvalidCode
+	}
 	return []byte(c), nil
 }
 
-// UnmarshalText implements encoding.TextUnmarshaler, normalizing any accepted
-// form to canonical. Returns ErrInvalidCode if the text is not a valid code.
+// UnmarshalText implements encoding.TextUnmarshaler, normalizing any form Parse
+// accepts to canonical. Empty text yields the zero Code, so a zero Code
+// round-trips. Returns ErrInvalidCode if the text is not a valid code.
 func (c *Code) UnmarshalText(text []byte) error {
+	if len(text) == 0 {
+		*c = ""
+		return nil
+	}
 	pin, err := normalize(string(text))
 	if err != nil {
 		return err
@@ -138,7 +158,11 @@ func (c *Code) UnmarshalText(text []byte) error {
 }
 
 // GeoJSON returns the code's cell as a GeoJSON Feature: a Polygon of the cell's
-// bounding box with the canonical code under the "digipin" property.
+// bounding box with the canonical code under the "digipin" property. An invalid
+// Code yields a Feature with a null geometry and empty properties.
 func (c Code) GeoJSON() []byte {
-	return feature(c.Bounds(), `"digipin":`+strconv.Quote(string(c)))
+	if !c.Valid() {
+		return feature(Bounds{}, map[string]string{})
+	}
+	return feature(c.Bounds(), map[string]string{"digipin": string(c)})
 }

@@ -6,33 +6,32 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   test:
-    name: Test and Validate
+    name: Test (Go ${{ matrix.go-version }})
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go-version: ["1.21", "1.22", "1.23", "1.24"]
+        # The go.mod minimum (keep in sync with go.mod) and the latest release.
+        go-version: ["1.24.x", stable]
 
     steps:
-      - name: Check out code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go-version }}
 
-      - name: Build
-        run: go build ./...
-
-      - name: Run tests with coverage
-        run: go test -v -race -coverprofile=coverage.out ./...
+      - name: Test with race detector and coverage
+        run: go test -race -coverprofile=coverage.out ./...
 
       - name: Enforce 100% coverage
+        shell: bash # adds -o pipefail, so a go tool cover failure fails the step
         run: |
-          go tool cover -func=coverage.out
-          UNCOVERED=$(go tool cover -func=coverage.out | grep -v '100.0%' | grep -v '^total:' || true)
+          UNCOVERED=$(go tool cover -func=coverage.out | grep -v '100.0%' || true)
           if [ -n "$UNCOVERED" ]; then
             echo "Coverage is below 100%:"
             echo "$UNCOVERED"
@@ -41,31 +40,20 @@ jobs:
           echo "Coverage is 100.0%"
 
       - name: Fuzz smoke test
-        if: matrix.go-version == '1.24'
+        if: matrix.go-version == 'stable'
         run: |
-          go test -run=^$ -fuzz=FuzzEncodeDecodeRoundTrip -fuzztime=20s .
-          go test -run=^$ -fuzz=FuzzDecode -fuzztime=20s .
-
-      - name: Check formatting and vet
-        run: |
-          if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
-            echo "Code is not formatted:"
-            gofmt -s -l .
-            exit 1
-          fi
-          go vet ./...
+          go test -run='^$' -fuzz=FuzzEncodeDecodeRoundTrip -fuzztime=20s .
+          go test -run='^$' -fuzz=FuzzDecode -fuzztime=20s .
 
   lint:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
-          go-version: "1.24"
-      - name: golangci-lint
-        # Pinned to the version the .golangci.yml schema targets (v1). Using
-        # "latest" would install golangci-lint v2, whose config format differs.
-        uses: golangci/golangci-lint-action@v6
+          go-version: stable
+      # Runs gofmt and govet too (see .golangci.yml).
+      - uses: golangci/golangci-lint-action@v9
         with:
-          version: v1.64.8
+          version: v2.15.0
