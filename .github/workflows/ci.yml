@@ -5,6 +5,7 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main]
+  workflow_dispatch: # re-run by hand: gh workflow run ci.yml
 
 permissions:
   contents: read
