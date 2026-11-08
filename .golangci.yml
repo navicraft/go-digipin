@@ -1,35 +1,41 @@
-run:
-  timeout: 3m
+version: "2"
 
 linters:
+  # The "standard" set (errcheck, govet, ineffassign, staticcheck, unused) is
+  # enabled by default; these are added on top.
   enable:
-    - revive
-    - govet
-    - errcheck
-    - staticcheck
-    - ineffassign
-    - unused
-    - misspell
-    - gocyclo
     - goconst
-    - unconvert
+    - gocyclo
+    - misspell
     - prealloc
-    - gofmt
+    - revive
+    - unconvert
+  settings:
+    gocyclo:
+      min-complexity: 15
+    misspell:
+      locale: US
+  exclusions:
+    # The exclusions golangci-lint v1 applied by default.
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      # Table-driven tests and example outputs are intentionally verbose.
+      - path: _test\.go
+        linters:
+          - goconst
+          - gocyclo
 
-linters-settings:
-  gocyclo:
-    min-complexity: 15
-  misspell:
-    locale: US
-  gofmt:
-    simplify: true
+formatters:
+  enable:
+    - gofmt
+  settings:
+    gofmt:
+      simplify: true
 
 issues:
-  exclude-rules:
-    # Table-driven tests and example outputs are intentionally verbose.
-    - path: _test\.go
-      linters:
-        - gocyclo
-        - goconst
   max-issues-per-linter: 0
   max-same-issues: 0

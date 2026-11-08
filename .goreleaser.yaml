@@ -1,0 +1,23 @@
+version: 2
+
+builds:
+  - main: ./cmd/digipin
+    binary: digipin
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{.Tag}}
+
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  prerelease: auto # tags like v1.2.0-rc1 become pre-releases

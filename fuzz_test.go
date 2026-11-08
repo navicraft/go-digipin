@@ -5,9 +5,10 @@ import (
 	"testing"
 )
 
-// FuzzEncodeDecodeRoundTrip checks that any in-bounds coordinate encodes to a
-// code whose cell contains both the original point and the decoded center, for
-// every precision level.
+// FuzzEncodeDecodeRoundTrip checks that any in-bounds coordinate encodes to
+// the same code as the official reference implementation, and to a code whose
+// cell contains both the original point and the decoded center, for every
+// precision level. Cell edges are exact in float64, so containment is exact.
 func FuzzEncodeDecodeRoundTrip(f *testing.F) {
 	f.Add(12.9716, 77.5946, 10)
 	f.Add(2.5, 63.5, 1)
@@ -34,10 +35,12 @@ func FuzzEncodeDecodeRoundTrip(f *testing.F) {
 			t.Fatalf("level = %d, want %d", c.Level(), level)
 		}
 
+		if want := officialEncode(lat, lng)[:level]; string(c) != want {
+			t.Fatalf("EncodeLevel(%v,%v,%d) = %s, official = %s", lat, lng, level, c, want)
+		}
+
 		b := c.Bounds()
-		const eps = 1e-9
-		if lat < b.MinLatitude-eps || lat > b.MaxLatitude+eps ||
-			lng < b.MinLongitude-eps || lng > b.MaxLongitude+eps {
+		if !b.Contains(Coordinate{Latitude: lat, Longitude: lng}) {
 			t.Fatalf("point (%v,%v) not inside cell %v for code %q", lat, lng, b, c)
 		}
 		if !b.Contains(c.Coordinate()) {
@@ -56,6 +59,12 @@ func FuzzDecode(f *testing.F) {
 	f.Add("not a code")
 
 	f.Fuzz(func(t *testing.T, s string) {
+		// The strict validator must never accept what the lenient parser rejects.
+		if ValidateCode(s) == nil {
+			if c, err := Parse(s); err != nil || c.Level() != 10 {
+				t.Fatalf("ValidateCode accepted %q but Parse gave %q, %v", s, c, err)
+			}
+		}
 		coord, err := Decode(s)
 		if err != nil {
 			return
@@ -69,6 +78,9 @@ func FuzzDecode(f *testing.F) {
 		}
 		if !c.Valid() {
 			t.Fatalf("Parse(%q) produced invalid code %q", s, c)
+		}
+		if !c.Bounds().Contains(coord) {
+			t.Fatalf("Decode(%q) = %v, outside its cell %v", s, coord, c.Bounds())
 		}
 	})
 }

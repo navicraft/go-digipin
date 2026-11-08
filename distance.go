@@ -19,7 +19,9 @@ func (c Coordinate) DistanceTo(other Coordinate) float64 {
 }
 
 // Distance returns the great-circle distance, in meters, between the centers of
-// two DIGIPIN cells.
+// two DIGIPIN cells, or NaN if either Code is not Valid.
+//
+// Deprecated: use a.DistanceTo(b).
 func Distance(a, b Code) float64 {
-	return a.Coordinate().DistanceTo(b.Coordinate())
+	return a.DistanceTo(b)
 }

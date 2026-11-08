@@ -7,12 +7,10 @@ import (
 	"strings"
 )
 
-// charset lists the 16 approved DIGIPIN characters in order. Digits 0 and 1 and
-// letters I and O are intentionally excluded to avoid visual ambiguity.
-const charset = "23456789CFJKLMPT"
-
 // digipinGrid is the DIGIPIN 4x4 labeling grid. Row 0 is the northernmost band
-// (maximum latitude); column 0 is the westernmost (minimum longitude).
+// (maximum latitude); column 0 is the westernmost (minimum longitude). Its 16
+// characters are the approved DIGIPIN set: digits 0 and 1 and letters I and O
+// are excluded to avoid visual ambiguity.
 var digipinGrid = [4][4]byte{
 	{'F', 'C', '9', '8'},
 	{'J', '3', '2', '7'},
@@ -20,18 +18,20 @@ var digipinGrid = [4][4]byte{
 	{'L', 'M', 'P', 'T'},
 }
 
-// gridPos is the reverse lookup of digipinGrid: character -> [row, col]. It is
-// built once in init so walk needs no per-character search and normalize can
-// validate characters in O(1).
-var gridPos = make(map[byte][2]int, 16)
-
-func init() {
-	for r := 0; r < 4; r++ {
-		for c := 0; c < 4; c++ {
-			gridPos[digipinGrid[r][c]] = [2]int{r, c}
+// gridPos is the reverse lookup of digipinGrid: byte -> row*4+col, or -1 for a
+// byte that is not an approved (upper-case) DIGIPIN character. A flat array
+// makes the lookup a single index with no hashing or allocation.
+var gridPos = func() (t [256]int8) {
+	for i := range t {
+		t[i] = -1
+	}
+	for r := range 4 {
+		for c := range 4 {
+			t[digipinGrid[r][c]] = int8(r*4 + c)
 		}
 	}
-}
+	return t
+}()
 
 // DIGIPIN coverage area: the bounding box of India and its territorial waters.
 const (
@@ -41,14 +41,8 @@ const (
 	maxLng = 99.5
 )
 
-// Global coordinate limits and code geometry.
-const (
-	globalMinLat = -90.0
-	globalMaxLat = 90.0
-	globalMinLng = -180.0
-	globalMaxLng = 180.0
-	codeLength   = 10
-)
+// codeLength is the number of characters in a full DIGIPIN.
+const codeLength = 10
 
 // DefaultTolerance is the default coordinate tolerance (in decimal degrees) used
 // by Coordinate.WithinTolerance. It is roughly 11 meters at the equator.
@@ -56,7 +50,8 @@ const DefaultTolerance = 1e-4
 
 // Errors reported by this package. Use errors.Is to test for them.
 var (
-	// ErrInvalidCoordinate is returned when coordinates are out of range or not finite.
+	// ErrInvalidCoordinate is returned when coordinates are not finite or lie
+	// outside the DIGIPIN coverage area.
 	ErrInvalidCoordinate = errors.New("digipin: invalid coordinate")
 	// ErrInvalidCode is returned when a DIGIPIN string is malformed.
 	ErrInvalidCode = errors.New("digipin: invalid code")
@@ -83,12 +78,8 @@ func EncodeLevel(latitude, longitude float64, level int) (Code, error) {
 	if level < 1 || level > codeLength {
 		return "", fmt.Errorf("%w: %d (want 1..%d)", ErrInvalidLevel, level, codeLength)
 	}
-	if err := validateCoordinates(latitude, longitude); err != nil {
+	if err := ValidateCoordinates(latitude, longitude); err != nil {
 		return "", err
-	}
-	if latitude < minLat || latitude > maxLat || longitude < minLng || longitude > maxLng {
-		return "", fmt.Errorf("%w: outside DIGIPIN bounds [%.1f,%.1f]x[%.1f,%.1f]",
-			ErrInvalidCoordinate, minLat, maxLat, minLng, maxLng)
 	}
 
 	var b strings.Builder
@@ -97,7 +88,7 @@ func EncodeLevel(latitude, longitude float64, level int) (Code, error) {
 	lat0, lat1 := minLat, maxLat
 	lng0, lng1 := minLng, maxLng
 
-	for i := 0; i < level; i++ {
+	for range level {
 		latDiv := (lat1 - lat0) / 4.0
 		lngDiv := (lng1 - lng0) / 4.0
 
@@ -112,10 +103,11 @@ func EncodeLevel(latitude, longitude float64, level int) (Code, error) {
 	return Code(b.String()), nil
 }
 
-// Parse validates a DIGIPIN string in any accepted form (continuous, spaced, or
-// hyphenated, any case) and returns it as a canonical Code. Partial codes of
-// 1..10 characters are accepted. Returns ErrInvalidCode if the string is not a
-// valid code.
+// Parse validates a DIGIPIN string and returns it as a canonical Code. It is
+// deliberately lenient: besides the specification's continuous form it accepts
+// surrounding whitespace, spaces and hyphens anywhere, any letter case, and
+// partial codes of 1..10 characters. Use ValidateCode for strict, specification-conformant checking.
+// Returns ErrInvalidCode if the string is not a valid code.
 func Parse(s string) (Code, error) {
 	pin, err := normalize(s)
 	if err != nil {
@@ -125,8 +117,8 @@ func Parse(s string) (Code, error) {
 }
 
 // Decode converts a DIGIPIN string to the coordinate at the center of its cell.
-// It accepts continuous, spaced, and hyphenated input, any case, and partial
-// codes. Returns ErrInvalidCode if the string is malformed.
+// It accepts the same lenient forms as Parse. Returns ErrInvalidCode if the
+// string is malformed.
 func Decode(s string) (Coordinate, error) {
 	c, err := Parse(s)
 	if err != nil {
@@ -135,16 +127,15 @@ func Decode(s string) (Coordinate, error) {
 	return c.Coordinate(), nil
 }
 
-// walk replays a normalized (validated, separator-free, upper-case) DIGIPIN
-// through the grid and returns the final cell bounds. Every character is
-// guaranteed to be in gridPos, so there is no error path.
+// walk replays a valid canonical DIGIPIN through the grid and returns the final
+// cell bounds. Callers must check validity first.
 func walk(pin string) (lat0, lat1, lng0, lng1 float64) {
 	lat0, lat1 = minLat, maxLat
 	lng0, lng1 = minLng, maxLng
 
-	for i := 0; i < len(pin); i++ {
-		rc := gridPos[pin[i]]
-		lat0, lat1, lng0, lng1 = narrow(lat0, lat1, lng0, lng1, rc[0], rc[1])
+	for i := range len(pin) {
+		p := int(gridPos[pin[i]])
+		lat0, lat1, lng0, lng1 = narrow(lat0, lat1, lng0, lng1, p/4, p%4)
 	}
 	return lat0, lat1, lng0, lng1
 }
@@ -163,9 +154,12 @@ func narrow(lat0, lat1, lng0, lng1 float64, row, col int) (nLat0, nLat1, nLng0, 
 	return nLat0, nLat1, nLng0, nLng1
 }
 
-// clampIndex constrains a grid index to [0, 3]. Coordinates on the northern or
-// eastern edge of a cell can produce an index of -1 or 4 from the floor division;
-// clamping keeps them in the boundary cell.
+// clampIndex constrains a grid index to [0, 3]. Together with the floor
+// division in EncodeLevel it implements the specification's grid-line rule
+// (section 4.4): a point on an interior grid line belongs to the cell to its
+// north and/or east, except on the outer 38.5N and 99.5E lines, where the
+// index would fall outside the grid and is clamped back to the southern or
+// western cell.
 func clampIndex(v int) int {
 	if v < 0 {
 		return 0
@@ -176,61 +170,80 @@ func clampIndex(v int) int {
 	return v
 }
 
-// normalize strips spaces and hyphens, upper-cases letters, validates that every
+// upper upper-cases an ASCII letter and returns any other byte unchanged.
+func upper(b byte) byte {
+	if b >= 'a' && b <= 'z' {
+		return b - ('a' - 'A')
+	}
+	return b
+}
+
+// normalize trims surrounding whitespace (as the reference decoder does),
+// strips spaces and hyphens, upper-cases letters, validates that every
 // remaining character is an approved DIGIPIN character, and checks the length is
 // in [1, 10]. It returns the canonical continuous code.
 func normalize(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if Code(s).Valid() {
+		return s, nil // already canonical: no allocation
+	}
 	var b strings.Builder
-	b.Grow(len(s))
+	b.Grow(codeLength)
 	for _, r := range s {
 		if r == ' ' || r == '-' {
 			continue
 		}
-		if r >= 'a' && r <= 'z' {
-			r -= 'a' - 'A'
-		}
-		if r > 127 {
+		if r > 127 || gridPos[upper(byte(r))] < 0 {
 			return "", fmt.Errorf("%w: bad character %q", ErrInvalidCode, r)
 		}
-		if _, ok := gridPos[byte(r)]; !ok {
-			return "", fmt.Errorf("%w: bad character %q", ErrInvalidCode, r)
+		if b.Len() == codeLength {
+			return "", fmt.Errorf("%w: longer than %d characters", ErrInvalidCode, codeLength)
 		}
-		b.WriteByte(byte(r))
+		b.WriteByte(upper(byte(r)))
 	}
-	out := b.String()
-	if len(out) < 1 || len(out) > codeLength {
-		return "", fmt.Errorf("%w: length %d (want 1..%d)", ErrInvalidCode, len(out), codeLength)
+	if b.Len() == 0 {
+		return "", fmt.Errorf("%w: empty", ErrInvalidCode)
 	}
-	return out, nil
+	return b.String(), nil
 }
 
-func validateCoordinates(lat, lng float64) error {
-	if math.IsNaN(lat) || math.IsNaN(lng) || math.IsInf(lat, 0) || math.IsInf(lng, 0) {
+// ValidateCoordinates reports whether latitude and longitude are finite and lie
+// within the DIGIPIN coverage area (latitude [2.5, 38.5], longitude
+// [63.5, 99.5]), i.e. whether Encode would accept them. Returns
+// ErrInvalidCoordinate on failure.
+func ValidateCoordinates(latitude, longitude float64) error {
+	if math.IsNaN(latitude) || math.IsNaN(longitude) || math.IsInf(latitude, 0) || math.IsInf(longitude, 0) {
 		return fmt.Errorf("%w: not finite", ErrInvalidCoordinate)
 	}
-	if lat < globalMinLat || lat > globalMaxLat || lng < globalMinLng || lng > globalMaxLng {
-		return fmt.Errorf("%w: latitude [-90,90], longitude [-180,180]", ErrInvalidCoordinate)
+	if latitude < minLat || latitude > maxLat {
+		return fmt.Errorf("%w: latitude %v out of range [%v, %v]", ErrInvalidCoordinate, latitude, minLat, maxLat)
+	}
+	if longitude < minLng || longitude > maxLng {
+		return fmt.Errorf("%w: longitude %v out of range [%v, %v]", ErrInvalidCoordinate, longitude, minLng, maxLng)
 	}
 	return nil
 }
 
-// ValidateCoordinates reports whether latitude and longitude are finite and within
-// the global ranges [-90, 90] and [-180, 180]. It does not check the DIGIPIN
-// coverage area. Returns ErrInvalidCoordinate on failure.
-func ValidateCoordinates(latitude, longitude float64) error {
-	return validateCoordinates(latitude, longitude)
-}
-
-// ValidateCode reports whether a string is a well-formed full (10-character)
-// DIGIPIN. Spaces and hyphens are tolerated and case is ignored; partial codes
-// are rejected. Returns ErrInvalidCode on failure.
+// ValidateCode reports whether s is a full DIGIPIN in a form the specification
+// permits: 10 approved characters, either continuous ("39JJ567L7P") or grouped
+// 3-4-3 with single spaces ("39J J567 L7P"). Like the reference decoder, it
+// ignores letter case and surrounding whitespace. Hyphens, other separators,
+// and partial codes are rejected; use Parse for lenient input. Returns
+// ErrInvalidCode on failure.
 func ValidateCode(s string) error {
-	pin, err := normalize(s)
-	if err != nil {
-		return err
+	s = strings.TrimSpace(s)
+	pin := s
+	if len(s) == codeLength+2 && s[3] == ' ' && s[8] == ' ' {
+		pin = s[:3] + s[4:8] + s[9:]
 	}
 	if len(pin) != codeLength {
-		return fmt.Errorf("%w: must be %d characters, got %d", ErrInvalidCode, codeLength, len(pin))
+		return fmt.Errorf("%w: %q is not a %d-character code (continuous or 3-4-3 spaced)",
+			ErrInvalidCode, s, codeLength)
+	}
+	for i := range len(pin) {
+		if gridPos[upper(pin[i])] < 0 {
+			return fmt.Errorf("%w: bad character %q", ErrInvalidCode, pin[i])
+		}
 	}
 	return nil
 }
